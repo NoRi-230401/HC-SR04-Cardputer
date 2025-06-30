@@ -64,7 +64,7 @@ const char *NVM_LOWBAT = "lbat";
 const char *NVM_LANG = "lang";
 const char *LANG[] = {"English", "日本語"};
 static uint8_t LANG_INDEX = 0;
-const char *meas_items[][1] = {"Distance", "距離"};
+const char *meas_items[] = {"Distance", "距離"};
 
 void setup();
 void loop();
@@ -89,6 +89,12 @@ void prtBatLvl(uint8_t batLvl);
 void lowBatteryCheck(uint8_t batLvl);
 
 // --------------------------------------------------------
+// --- For non-blocking HC-SR04 reading ---
+volatile unsigned long echoStartTime = 0;
+volatile unsigned long echoEndTime = 0;
+volatile bool echoReceived = false;
+void IRAM_ATTR echo_isr();
+
 #define echoPin 1 // Echo Pin
 #define trigPin 2 // Trigger Pin
 
@@ -99,6 +105,9 @@ void setup()
   pinMode(echoPin, INPUT);
   pinMode(trigPin, OUTPUT);
   digitalWrite(trigPin, LOW);
+
+  // Attach interrupt to the echo pin
+  attachInterrupt(digitalPinToInterrupt(echoPin), echo_isr, CHANGE);
 
   if (SD_ENABLE)
   { // M5stack-SD-Updater lobby
@@ -124,36 +133,68 @@ void loop()
 
 #define DIST_LINE_INDEX 3
 #define DIST_DISP_WIDTH 27
-static unsigned long PREV_SR04_TM = 0L;
+static unsigned long prev_sr04_trigger_ms = 0L;
+static bool sr04_triggered = false; // Flag to indicate a trigger pulse was sent
+
 void SR04_sensor()
 {
-  unsigned long currentTime = millis(); // Get current time once
+  unsigned long current_ms = millis();
 
-  if (currentTime - PREV_SR04_TM < SR04_CHECK_INTERVAL_MS)
-    return;
-
-  PREV_SR04_TM = currentTime;
-  const double soundVelocity = 34350. / 1000000.; //[cm/usec at 20 degrees Celsius]
-
-  digitalWrite(trigPin, LOW);
-  delayMicroseconds(2);
-  digitalWrite(trigPin, HIGH); // ultrasonic wave transmit
-  delayMicroseconds(10);       //
-  digitalWrite(trigPin, LOW);
-
-  unsigned long duration = pulseIn(echoPin, HIGH); // uSec
-  if (duration > 0)
+  // Trigger the sensor at regular intervals if not waiting for an echo
+  if (!sr04_triggered && (current_ms - prev_sr04_trigger_ms >= SR04_CHECK_INTERVAL_MS))
   {
-    double distance = duration * soundVelocity / 2; // [cm]
+    prev_sr04_trigger_ms = current_ms;
+    echoReceived = false;
+    sr04_triggered = true; // Set flag that we are waiting for an echo
 
-    prtDistance(distance);
-    dbPrtln("Distance = " + String(distance) + " cm");
+    // Send trigger pulse
+    digitalWrite(trigPin, LOW);
+    delayMicroseconds(2);
+    digitalWrite(trigPin, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(trigPin, LOW);
   }
-  else
+
+  // Check if a new echo has been received
+  if (echoReceived)
   {
-    canvas.fillRect(0, SC_LINES[DIST_LINE_INDEX], X_WIDTH, H_CHR * 5, TFT_RED);
+    sr04_triggered = false; // Reset trigger flag
+    // Disable interrupts temporarily to safely read volatile variables
+    noInterrupts();
+    unsigned long duration = echoEndTime - echoStartTime;
+    echoReceived = false; // Reset the flag
+    interrupts();
+
+    // Check for valid duration (e.g., less than 38ms for ~6.5m range)
+    if (duration > 0 && duration < 38000) {
+        // Speed of sound in cm/us (at approx. 20°C)
+        const double soundVelocity = 34350.0 / 1000000.0;
+        double distance = duration * soundVelocity / 2; // [cm]
+        prtDistance(distance);
+        dbPrtln("Distance = " + String(distance) + " cm");
+    } else {
+        // Duration too long or zero, likely an error or out of range
+        prtDistance(NAN);
+        dbPrtln("Distance = NAN");
+    }
+    canvas.pushSprite(0, 0);
   }
-  canvas.pushSprite(0, 0);
+  // Check for timeout (e.g., 60ms is a reasonable timeout for HC-SR04)
+  else if (sr04_triggered && (current_ms - prev_sr04_trigger_ms > 60))
+  {
+    sr04_triggered = false; // Reset trigger flag
+    prtDistance(NAN);       // Report timeout as Not-A-Number
+    canvas.pushSprite(0, 0);
+  }
+}
+
+void IRAM_ATTR echo_isr() {
+  if (digitalRead(echoPin) == HIGH) {
+    echoStartTime = micros();
+  } else {
+    echoEndTime = micros();
+    echoReceived = true;
+  }
 }
 
 static float PREV_DISTANCE = 0.0;
@@ -343,7 +384,8 @@ void dispMeasItem()
 {
   canvas.setFont(&fonts::lgfxJapanGothic_24);
   canvas.setTextSize(1);
-  int width = max(canvas.textWidth(meas_items[0][0]), canvas.textWidth(meas_items[0][1]));
+  int width = max(canvas.textWidth(meas_items[0]), canvas.textWidth(meas_items[1]));
+  
   const int font_size = 24;
 
   // clear
@@ -351,7 +393,7 @@ void dispMeasItem()
 
   // measuremt items
   canvas.setTextColor(TFT_ORANGE, TFT_BLACK);
-  canvas.drawString(meas_items[0][LANG_INDEX], W_CHR * MEAS_ITEM_POS, SC_LINES[7]);
+  canvas.drawString(meas_items[LANG_INDEX], W_CHR * MEAS_ITEM_POS, SC_LINES[7]);
 }
 
 bool updateSettingValue(uint8_t &value, KeyNum keyNo, uint8_t min, uint8_t max, uint8_t step, uint8_t big_step)
