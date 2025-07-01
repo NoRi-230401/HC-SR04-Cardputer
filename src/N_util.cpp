@@ -132,7 +132,6 @@ void dbPrtln(String msg)
 #ifdef DEBUG
   Serial.println(msg);
 #endif
-  ;
 }
 
 void dbPrt(String msg)
@@ -140,7 +139,6 @@ void dbPrt(String msg)
 #ifdef DEBUG
   Serial.print(msg);
 #endif
-  ;
 }
 
 void dispLx(uint8_t Lx, const char *msg)
