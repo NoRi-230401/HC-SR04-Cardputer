@@ -16,7 +16,7 @@ This is software for measuring distance using the HC-SR04 ultrasonic distance se
 *   **Settings Persistence**: Settings are automatically saved to the Cardputer's internal non-volatile memory (NVS) and are retained on the next startup.
 *   **Power Saving Design**: Reduces battery consumption by disabling Wi-Fi and Bluetooth and optimizing the CPU frequency.
 *   **Battery Protection**: Automatically shuts down when the battery level falls below the set threshold.
-*   **SD Updater Support**: By pressing `a` specific key during startup, you can launch another application (`/menu.bin`) from the SD card.
+*   **SD Updater Support**: By pressing a specific key during startup, you can launch another application (`/menu.bin`) from the SD card.
 
 ## Requirements
 
